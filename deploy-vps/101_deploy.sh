@@ -3,6 +3,7 @@
 # deploy.sh - VPS 部署脚本 (2C2G 优化)
 # 用法: bash deploy.sh [命令]
 #   命令:
+#     build     - 在 VPS 上构建 Docker 镜像
 #     setup     - 首次部署 (清理+swap+启动)
 #     start     - 启动服务
 #     stop      - 停止服务
@@ -178,6 +179,43 @@ import_images() {
     docker images | grep kaifangqian
 }
 
+# ── 检查必需镜像是否存在 ─────────────────────────────────────────
+check_images() {
+    local missing=()
+
+    if ! docker image inspect kaifangqian-backend:latest &>/dev/null; then
+        missing+=("kaifangqian-backend:latest")
+    fi
+    if ! docker image inspect kaifangqian-frontend:latest &>/dev/null; then
+        missing+=("kaifangqian-frontend:latest")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        error "缺少以下 Docker 镜像:"
+        for img in "${missing[@]}"; do
+            echo "  - $img"
+        done
+        echo ""
+        echo "  请先通过以下方式之一准备镜像:"
+        echo ""
+        echo "  方式1: 本地构建后传输到 VPS"
+        echo "    # 本地执行:"
+        echo "    cd deploy-vps && bash build.sh"
+        echo "    docker save kaifangqian-backend:latest kaifangqian-frontend:latest | gzip > kq-images.tar.gz"
+        echo "    scp kq-images.tar.gz root@<vps-ip>:$(dirname "$SCRIPT_DIR")/"
+        echo ""
+        echo "  方式2: 在 VPS 上直接构建 (需要 Java + Maven + Node.js)"
+        echo "    cd $(dirname "$SCRIPT_DIR")/kaifangqian-parent && mvn clean package -DskipTests"
+        echo "    docker build -t kaifangqian-backend:latest ."
+        echo "    cd $(dirname "$SCRIPT_DIR")/deploy-vps && bash build.sh"
+        echo ""
+        return 1
+    fi
+
+    info "镜像检查通过"
+    return 0
+}
+
 # ── 首次部署 ────────────────────────────────────────────────────
 setup() {
     info "========== 首次部署 =========="
@@ -188,9 +226,9 @@ setup() {
     # 2. 设置 Swap
     setup_swap 4096
 
-    # 3. 导入镜像 (如果有的话)
-    if [ -f "$SCRIPT_DIR/$IMAGE_ARCHIVE" ] || [ -f "$(dirname "$SCRIPT_DIR")/$IMAGE_ARCHIVE" ]; then
-        import_images
+    # 3. 检查镜像
+    if ! check_images; then
+        exit 1
     fi
 
     # 4. 启动服务
@@ -222,6 +260,9 @@ setup() {
 # ── 启动 ────────────────────────────────────────────────────────
 start() {
     info "启动服务..."
+    if ! check_images; then
+        exit 1
+    fi
     cd "$SCRIPT_DIR"
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
     sleep 5
@@ -269,6 +310,7 @@ show_logs() {
 check_env
 
 case "${1:-help}" in
+    build)   bash "$SCRIPT_DIR/build-on-vps.sh" ;;
     setup)   setup ;;
     start)   start ;;
     stop)    stop ;;
@@ -279,9 +321,10 @@ case "${1:-help}" in
     import)  import_images ;;
     https)   bash "$SCRIPT_DIR/setup-https.sh" ;;
     *)
-        echo "用法: $0 {setup|start|stop|restart|status|logs|cleanup|import|https}"
+        echo "用法: $0 {build|setup|start|stop|restart|status|logs|cleanup|import|https}"
         echo ""
-        echo "  setup   - 首次部署 (清理+swap+导入镜像+启动)"
+        echo "  build   - 在 VPS 上构建 Docker 镜像 (自动安装/清理构建工具)"
+        echo "  setup   - 首次部署 (清理+swap+启动)"
         echo "  start   - 启动服务"
         echo "  stop    - 停止服务"
         echo "  restart - 重启服务"

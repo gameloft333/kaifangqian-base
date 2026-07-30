@@ -56,8 +56,9 @@ deploy-vps/
 ├── Dockerfile.frontend       # 前端镜像定义
 ├── nginx-default.conf        # 容器内 Nginx 配置 (SPA + API 代理)
 ├── nginx-https.conf.template # Host Nginx HTTPS 配置模板 (CF Origin SSL)
-├── build.sh                  # 本地构建脚本
-├── deploy.sh                 # VPS 部署/管理脚本
+├── build.sh                  # 本地构建脚本 (需本地有 Docker)
+├── build-on-vps.sh           # VPS 端构建脚本 (自动安装/清理工具)
+├── 101_deploy.sh             # VPS 部署/管理脚本
 ├── setup-https.sh            # HTTPS 一键配置 (复用 0025 逻辑)
 ├── .env                      # 环境变量 (密码)
 ├── .env.example              # 环境变量模板
@@ -66,7 +67,28 @@ deploy-vps/
 
 ## 快速开始
 
-### 方式一：本地构建 + 传输到 VPS
+### 方式一：VPS 上直接构建（推荐）
+
+适用于本地没有 Docker 或资源紧张的场景。VPS 上自动安装构建工具、构建镜像、清理工具。
+
+```bash
+# 1. 克隆项目到 VPS
+git clone https://gitee.com/kaifangqian/kaifangqian-base.git
+cd kaifangqian-base/deploy-vps
+
+# 2. 修改密码
+vim .env
+
+# 3. 在 VPS 上构建镜像 (自动安装 Java/Maven/Node.js，构建后可选卸载)
+bash 101_deploy.sh build
+
+# 4. 启动服务
+bash 101_deploy.sh setup
+```
+
+### 方式二：本地构建 + 传输到 VPS
+
+适用于本地有 Docker 的场景。
 
 ```bash
 # 1. 本地构建镜像
@@ -77,32 +99,18 @@ bash build.sh
 docker save kaifangqian-backend:latest kaifangqian-frontend:latest | gzip > kq-images.tar.gz
 
 # 3. 传输到 VPS
-scp kq-images.tar.gz root@<vps-ip>:~/kaifangqian-base/deploy-vps/
+scp kq-images.tar.gz root@<vps-ip>:~/kaifangqian-base/
 
 # 4. SSH 到 VPS 部署
 ssh root@<vps-ip>
 cd ~/kaifangqian-base/deploy-vps
 
-# 5. 修改密码 (重要!)
+# 5. 修改密码
 vim .env
 
-# 6. 首次部署 (清理+swap+导入镜像+启动)
-bash deploy.sh setup
-```
-
-### 方式二：VPS 上直接构建
-
-```bash
-# 1. 克隆项目到 VPS
-git clone https://gitee.com/kaifangqian/kaifangqian-base.git
-cd kaifangqian-base
-
-# 2. 修改密码
-cd deploy-vps
-vim .env
-
-# 3. 首次部署
-bash deploy.sh setup
+# 6. 导入镜像 + 启动
+bash 101_deploy.sh import
+bash 101_deploy.sh setup
 ```
 
 ## HTTPS 配置 (Cloudflare Origin SSL)
@@ -152,14 +160,16 @@ SSL/TLS: 完全 (严格)
 ## 管理命令
 
 ```bash
-bash deploy.sh setup     # 首次部署 (清理+swap+启动)
-bash deploy.sh start     # 启动服务
-bash deploy.sh stop      # 停止服务
-bash deploy.sh restart   # 重启服务
-bash deploy.sh status    # 查看状态和内存使用
-bash deploy.sh logs      # 查看日志
-bash deploy.sh cleanup   # 清理磁盘空间
-bash deploy.sh import    # 导入镜像
+bash 101_deploy.sh build     # 在 VPS 上构建镜像 (自动安装/清理构建工具)
+bash 101_deploy.sh setup     # 首次部署 (清理+swap+启动)
+bash 101_deploy.sh start     # 启动服务
+bash 101_deploy.sh stop      # 停止服务
+bash 101_deploy.sh restart   # 重启服务
+bash 101_deploy.sh status    # 查看状态和内存使用
+bash 101_deploy.sh logs      # 查看日志
+bash 101_deploy.sh cleanup   # 清理磁盘空间
+bash 101_deploy.sh import    # 导入镜像
+bash 101_deploy.sh https     # 配置 HTTPS
 ```
 
 ## OOM 防护措施
