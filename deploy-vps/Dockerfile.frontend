@@ -1,0 +1,17 @@
+FROM nginx:1.26-alpine
+
+# Remove default config
+RUN rm /etc/nginx/conf.d/default.conf
+
+COPY nginx-default.conf /etc/nginx/conf.d/default.conf
+
+# Copy all frontend dist folders
+COPY opensign-web /data/opensign-web
+COPY opensign-manage /data/opensign-manage
+COPY opensign-tenant /data/opensign-tenant
+COPY opensign-message /data/opensign-message
+COPY opensign-mobile /data/opensign-mobile
+
+EXPOSE 8806
+
+CMD ["nginx", "-g", "daemon off;"]

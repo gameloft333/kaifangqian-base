@@ -1,0 +1,11 @@
+# 敏感文件
+.env
+*.tar.gz
+
+# 构建临时文件
+build/
+
+# 证书文件 (如有本地副本)
+*.crt
+*.key
+cf-domain-cert.md

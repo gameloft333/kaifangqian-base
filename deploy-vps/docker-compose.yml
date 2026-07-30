@@ -1,0 +1,159 @@
+###############################################################################
+# 开放签 (kaifangqian) - VPS 2C2G OOM-Optimized Docker Compose
+# 内存分配: 后端 450M + MySQL 350M + Redis 80M + Frontend 64M = ~944M
+# 预留: OS + 已有容器 ~350M + Swap 安全网
+###############################################################################
+
+services:
+  # ─── MySQL ────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:5.7
+    container_name: kq-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kaifangqian2024}
+      MYSQL_DATABASE: opensign
+      MYSQL_USER: kaifangqian
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kaifangqian2024}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb_buffer_pool_size=128M
+      - --innodb_log_buffer_size=8M
+      - --innodb_log_file_size=32M
+      - --innodb_flush_log_at_trx_commit=2
+      - --max_connections=30
+      - --tmp_table_size=16M
+      - --max_heap_table_size=16M
+      - --sort_buffer_size=256K
+      - --read_buffer_size=256K
+      - --join_buffer_size=256K
+      - --thread_cache_size=4
+      - --slow_query_log=0
+      - --skip-name-resolve
+    volumes:
+      - mysql_data:/var/lib/mysql
+    deploy:
+      resources:
+        limits:
+          memory: 350M
+        reservations:
+          memory: 200M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-kaifangqian2024}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kq-net
+
+  # ─── Redis ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: kq-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 64mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+      --requirepass ${REDIS_PASSWORD:-kaifangqian2024}
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+        reservations:
+          memory: 40M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-kaifangqian2024}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - kq-net
+
+  # ─── Backend (Spring Boot) ────────────────────────────────────────────
+  backend:
+    image: kaifangqian-backend:latest
+    container_name: kq-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      # JVM 内存限制 - 严格控制 OOM
+      JAVA_OPTS: >-
+        -Xms256m
+        -Xmx384m
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=100
+        -XX:MaxRAMPercentage=75.0
+        -XX:+HeapDumpOnOutOfMemoryError
+        -XX:HeapDumpPath=/tmp/heapdump.hprof
+        -Djava.security.egd=file:/dev/./urandom
+      # Spring 配置覆盖
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/opensign?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: kaifangqian
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-kaifangqian2024}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-kaifangqian2024}
+    volumes:
+      - backend_files:/home/kaifangqian/file
+      - backend_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 480M
+        reservations:
+          memory: 300M
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8899/resrun-paas/"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - kq-net
+
+  # ─── Frontend (Nginx) ─────────────────────────────────────────────────
+  frontend:
+    image: kaifangqian-frontend:latest
+    container_name: kq-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8806:8806"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8806/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - kq-net
+
+volumes:
+  mysql_data:
+    driver: local
+  backend_files:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  kq-net:
+    driver: bridge
