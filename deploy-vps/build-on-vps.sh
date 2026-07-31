@@ -224,7 +224,8 @@ fi
 # ── 清理构建临时文件 ─────────────────────────────────────────────
 echo ""
 info "清理构建临时文件..."
-rm -rf "$SCRIPT_DIR/build"
+# 只清理前端 Docker 镜像构建的临时目录，不删除上传的前端构建产物 (build/web/)
+rm -rf "$SCRIPT_DIR/build/frontend"
 rm -rf "$PROJECT_DIR/kaifangqian-parent/kaifangqian-system/target"
 info "临时文件已清理"
 
