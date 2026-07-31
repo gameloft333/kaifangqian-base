@@ -172,66 +172,28 @@ else
     info "后端镜像构建完成"
 fi
 
-# ── Step 4: 构建前端 (逐个构建，构建后立即清理释放内存) ──────────
+# ── Step 4: 检查前端构建产物 ──────────────────────────────────────
 echo ""
 info "[4/5] 检查前端构建产物..."
-WEB_DIR="$PROJECT_DIR/kaifangqian-web"
 BUILD_DIR="$SCRIPT_DIR/build/web"
-
-# 逐个检查前端应用，只构建缺失的
 APPS=(opensign-web opensign-manage opensign-tenant opensign-message opensign-mobile)
-TOTAL=${#APPS[@]}
-COUNT=0
-BUILT=0
 
+MISSING=()
 for app in "${APPS[@]}"; do
-    APP_DIR="$WEB_DIR/$app"
-    COUNT=$((COUNT + 1))
-
-    # 检查该应用的构建产物是否已存在
     if [ -d "$BUILD_DIR/$app" ] && [ -n "$(ls -A "$BUILD_DIR/$app" 2>/dev/null)" ]; then
-        info "  [$COUNT/$TOTAL] $app 构建产物已存在，跳过"
-        continue
-    fi
-
-    if [ -d "$APP_DIR" ]; then
-        echo ""
-        info "  [$COUNT/$TOTAL] 构建 $app ..."
-        cd "$APP_DIR"
-
-        # 限制 Node.js 内存 (Vite 构建内存密集)
-        export NODE_OPTIONS="--max-old-space-size=512"
-
-        # 检测 node_modules 是否已存在，避免重复安装
-        if [ -d "node_modules" ]; then
-            info "  node_modules 已存在，跳过 npm install"
-        else
-            info "  安装依赖..."
-            npm install --silent 2>/dev/null
-        fi
-
-        npm run build --silent 2>/dev/null
-        unset NODE_OPTIONS
-
-        if [ -d "dist" ]; then
-            mkdir -p "$BUILD_DIR/$app"
-            cp -r dist/* "$BUILD_DIR/$app/"
-            info "  ✓ $app 构建完成"
-            BUILT=$((BUILT + 1))
-        else
-            warn "  ✗ $app 构建失败 (可能 OOM)，跳过"
-        fi
-
-        # 清理 dist 释放磁盘 (保留 node_modules 避免重复安装)
-        rm -rf dist .vite
+        info "  ✓ $app 构建产物已存在 ($(du -sh "$BUILD_DIR/$app" | cut -f1))"
+    else
+        MISSING+=("$app")
+        warn "  ✗ $app 构建产物缺失"
     fi
 done
 
-if [ $BUILT -eq 0 ]; then
-    info "所有前端构建产物已存在，无需构建"
-else
-    info "本次构建完成 $BUILT 个前端应用"
+if [ ${#MISSING[@]} -gt 0 ]; then
+    error "以下前端构建产物缺失: ${MISSING[*]}"
+    error "请先在本地运行 build-frontend-local.sh 构建前端，然后上传到 $BUILD_DIR/"
+    exit 1
 fi
+info "所有前端构建产物就绪"
 
 # ── Step 5: 构建前端 Docker 镜像 (如不存在) ──────────────────────
 echo ""
