@@ -130,99 +130,134 @@ mvn -version 2>&1 | head -1
 node -v
 npm -v
 
-# ── Step 2: 构建后端 JAR ────────────────────────────────────────
+# ── Step 2: 构建后端 JAR (如不存在) ──────────────────────────────
 echo ""
-info "[2/5] 构建后端 JAR..."
+info "[2/5] 检查后端 JAR..."
 cd "$PROJECT_DIR/kaifangqian-parent"
 
-# 检查字体文件
-if [ ! -f "file/simsun.ttc" ]; then
-    warn "未找到中文字体文件 (file/simsun.ttc)"
-    warn "PDF 中文渲染可能异常，继续构建..."
+JAR_FILE="kaifangqian-system/target/kaifangqian.jar"
+
+if [ -f "$JAR_FILE" ]; then
+    info "后端 JAR 已存在: $(du -h "$JAR_FILE" | cut -f1)，跳过构建"
+else
+    info "构建后端 JAR..."
+
+    # 检查字体文件
+    if [ ! -f "file/simsun.ttc" ]; then
+        warn "未找到中文字体文件 (file/simsun.ttc)"
+        warn "PDF 中文渲染可能异常，继续构建..."
+    fi
+
+    # Maven 构建 (限制内存防止 OOM)
+    export MAVEN_OPTS="-Xms256m -Xmx512m -XX:+UseG1GC"
+    mvn clean package -DskipTests -q 2>&1 | tail -5
+
+    if [ ! -f "$JAR_FILE" ]; then
+        error "后端 JAR 构建失败"
+        exit 1
+    fi
+    info "后端 JAR 构建完成: $(du -h "$JAR_FILE" | cut -f1)"
 fi
 
-# Maven 构建 (限制内存防止 OOM)
-export MAVEN_OPTS="-Xms256m -Xmx512m -XX:+UseG1GC"
-mvn clean package -DskipTests -q 2>&1 | tail -5
-
-if [ ! -f "kaifangqian-system/target/kaifangqian.jar" ]; then
-    error "后端 JAR 构建失败"
-    exit 1
-fi
-info "后端 JAR 构建完成: $(du -h kaifangqian-system/target/kaifangqian.jar | cut -f1)"
-
-# ── Step 3: 构建后端 Docker 镜像 ────────────────────────────────
+# ── Step 3: 构建后端 Docker 镜像 (如不存在) ──────────────────────
 echo ""
-info "[3/5] 构建后端 Docker 镜像..."
-docker build -t kaifangqian-backend:latest .
-info "后端镜像构建完成"
+info "[3/5] 检查后端 Docker 镜像..."
+
+if docker image inspect kaifangqian-backend:latest &>/dev/null; then
+    info "后端镜像已存在，跳过构建"
+else
+    info "构建后端 Docker 镜像..."
+    cd "$PROJECT_DIR/kaifangqian-parent"
+    docker build -t kaifangqian-backend:latest .
+    info "后端镜像构建完成"
+fi
 
 # ── Step 4: 构建前端 (逐个构建，构建后立即清理释放内存) ──────────
 echo ""
-info "[4/5] 构建前端 (逐个构建防 OOM)..."
+info "[4/5] 检查前端构建产物..."
 WEB_DIR="$PROJECT_DIR/kaifangqian-web"
 BUILD_DIR="$SCRIPT_DIR/build/web"
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR"
 
-# 限制 Node.js 内存 (Vite 构建内存密集)
-export NODE_OPTIONS="--max-old-space-size=512"
-
+# 逐个检查前端应用，只构建缺失的
 APPS=(opensign-web opensign-manage opensign-tenant opensign-message opensign-mobile)
 TOTAL=${#APPS[@]}
 COUNT=0
+BUILT=0
 
 for app in "${APPS[@]}"; do
     APP_DIR="$WEB_DIR/$app"
     COUNT=$((COUNT + 1))
+
+    # 检查该应用的构建产物是否已存在
+    if [ -d "$BUILD_DIR/$app" ] && [ -n "$(ls -A "$BUILD_DIR/$app" 2>/dev/null)" ]; then
+        info "  [$COUNT/$TOTAL] $app 构建产物已存在，跳过"
+        continue
+    fi
 
     if [ -d "$APP_DIR" ]; then
         echo ""
         info "  [$COUNT/$TOTAL] 构建 $app ..."
         cd "$APP_DIR"
 
-        npm install --silent 2>/dev/null
+        # 限制 Node.js 内存 (Vite 构建内存密集)
+        export NODE_OPTIONS="--max-old-space-size=512"
+
+        # 检测 node_modules 是否已存在，避免重复安装
+        if [ -d "node_modules" ]; then
+            info "  node_modules 已存在，跳过 npm install"
+        else
+            info "  安装依赖..."
+            npm install --silent 2>/dev/null
+        fi
+
         npm run build --silent 2>/dev/null
+        unset NODE_OPTIONS
 
         if [ -d "dist" ]; then
             mkdir -p "$BUILD_DIR/$app"
             cp -r dist/* "$BUILD_DIR/$app/"
             info "  ✓ $app 构建完成"
+            BUILT=$((BUILT + 1))
         else
             warn "  ✗ $app 构建失败 (可能 OOM)，跳过"
         fi
 
-        # 立即清理: 删除 node_modules 和 dist 释放内存/磁盘
-        rm -rf node_modules dist .vite
-        info "  已清理 $app 临时文件"
-
-        # 打印当前内存状态
-        free -m | grep Mem
+        # 清理 dist 释放磁盘 (保留 node_modules 避免重复安装)
+        rm -rf dist .vite
     fi
 done
 
-unset NODE_OPTIONS
-info "前端构建完成"
+if [ $BUILT -eq 0 ]; then
+    info "所有前端构建产物已存在，无需构建"
+else
+    info "本次构建完成 $BUILT 个前端应用"
+fi
 
-# ── Step 5: 构建前端 Docker 镜像 ────────────────────────────────
+# ── Step 5: 构建前端 Docker 镜像 (如不存在) ──────────────────────
 echo ""
-info "[5/5] 构建前端 Docker 镜像..."
-cd "$SCRIPT_DIR"
+info "[5/5] 检查前端 Docker 镜像..."
 
-rm -rf build/frontend
-mkdir -p build/frontend
-cp nginx-default.conf build/frontend/
-cp Dockerfile.frontend build/frontend/Dockerfile
+if docker image inspect kaifangqian-frontend:latest &>/dev/null; then
+    info "前端镜像已存在，跳过构建"
+else
+    info "构建前端 Docker 镜像..."
+    cd "$SCRIPT_DIR"
 
-for app in opensign-web opensign-manage opensign-tenant opensign-message opensign-mobile; do
-    if [ -d "$BUILD_DIR/$app" ]; then
-        cp -r "$BUILD_DIR/$app" "build/frontend/$app"
-    fi
-done
+    rm -rf build/frontend
+    mkdir -p build/frontend
+    cp nginx-default.conf build/frontend/
+    cp Dockerfile.frontend build/frontend/Dockerfile
 
-cd build/frontend
-docker build -t kaifangqian-frontend:latest .
-info "前端镜像构建完成"
+    for app in opensign-web opensign-manage opensign-tenant opensign-message opensign-mobile; do
+        if [ -d "$BUILD_DIR/$app" ]; then
+            cp -r "$BUILD_DIR/$app" "build/frontend/$app"
+        fi
+    done
+
+    cd build/frontend
+    docker build -t kaifangqian-frontend:latest .
+    info "前端镜像构建完成"
+fi
 
 # ── 清理构建临时文件 ─────────────────────────────────────────────
 echo ""

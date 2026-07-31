@@ -52,64 +52,57 @@
 
 ```
 deploy-vps/
-├── docker-compose.yml        # 服务编排 (OOM 优化)
-├── Dockerfile.frontend       # 前端镜像定义
-├── nginx-default.conf        # 容器内 Nginx 配置 (SPA + API 代理)
-├── nginx-https.conf.template # Host Nginx HTTPS 配置模板 (CF Origin SSL)
-├── build.sh                  # 本地构建脚本 (需本地有 Docker)
-├── build-on-vps.sh           # VPS 端构建脚本 (自动安装/清理工具)
-├── 101_deploy.sh             # VPS 部署/管理脚本
-├── setup-https.sh            # HTTPS 一键配置 (复用 0025 逻辑)
-├── .env                      # 环境变量 (密码)
-├── .env.example              # 环境变量模板
-└── README.md                 # 本文档
+├── docker-compose.yml           # 服务编排 (OOM 优化)
+├── Dockerfile.frontend          # 前端镜像定义
+├── nginx-default.conf           # 容器内 Nginx 配置 (SPA + API 代理)
+├── nginx-https.conf.template    # Host Nginx HTTPS 配置模板 (CF Origin SSL)
+├── build-frontend-local.sh      # 本地构建前端 (仅需 Node.js，无需 Docker)
+├── build-on-vps.sh              # VPS 构建 Docker 镜像 (检测已有产物，按需构建)
+├── build.sh                     # 本地完整构建 (需 Docker)
+├── 101_deploy.sh                # VPS 部署/管理脚本
+├── setup-https.sh               # HTTPS 一键配置 (复用 0025 逻辑)
+├── .env                         # 环境变量 (密码)
+├── .env.example                 # 环境变量模板
+└── README.md                    # 本文档
 ```
 
 ## 快速开始
 
-### 方式一：VPS 上直接构建（推荐）
+### 推荐方式：本地构建前端 + VPS 构建 Docker 镜像
 
-适用于本地没有 Docker 或资源紧张的场景。VPS 上自动安装构建工具、构建镜像、清理工具。
+适用于 Windows 无 Docker、VPS 资源紧张的场景。前端在本地用 Node.js 构建，后端和 Docker 镜像在 VPS 上构建。
 
 ```bash
-# 1. 克隆项目到 VPS
-git clone https://gitee.com/kaifangqian/kaifangqian-base.git
-cd kaifangqian-base/deploy-vps
+# ═══ 本地 (Windows) ═══
+# 1. 只需 Node.js，不需要 Docker
+cd deploy-vps
+bash build-frontend-local.sh
 
-# 2. 修改密码
+# 2. 传输构建产物到 VPS
+scp -r build/web root@<vps-ip>:~/dev/kaifangqian-base/deploy-vps/build/
+
+# ═══ VPS ═══
+# 3. SSH 到 VPS
+ssh root@<vps-ip>
+cd ~/dev/kaifangqian-base/deploy-vps
+
+# 4. 修改密码
 vim .env
 
-# 3. 在 VPS 上构建镜像 (自动安装 Java/Maven/Node.js，构建后可选卸载)
-bash 101_deploy.sh build
+# 5. 构建 Docker 镜像 (自动检测已有产物，只构建缺少的)
+bash build-on-vps.sh
 
-# 4. 启动服务
+# 6. 启动服务
 bash 101_deploy.sh setup
 ```
 
-### 方式二：本地构建 + 传输到 VPS
+### 替代方式：全在 VPS 上构建
 
-适用于本地有 Docker 的场景。
+适用于 VPS 内存充足（4G+）或前端代码量小的场景。
 
 ```bash
-# 1. 本地构建镜像
-cd deploy-vps
-bash build.sh
-
-# 2. 导出镜像
-docker save kaifangqian-backend:latest kaifangqian-frontend:latest | gzip > kq-images.tar.gz
-
-# 3. 传输到 VPS
-scp kq-images.tar.gz root@<vps-ip>:~/kaifangqian-base/
-
-# 4. SSH 到 VPS 部署
-ssh root@<vps-ip>
-cd ~/kaifangqian-base/deploy-vps
-
-# 5. 修改密码
-vim .env
-
-# 6. 导入镜像 + 启动
-bash 101_deploy.sh import
+# VPS 上直接构建全部
+bash 101_deploy.sh build
 bash 101_deploy.sh setup
 ```
 
@@ -160,16 +153,19 @@ SSL/TLS: 完全 (严格)
 ## 管理命令
 
 ```bash
-bash 101_deploy.sh build     # 在 VPS 上构建镜像 (自动安装/清理构建工具)
-bash 101_deploy.sh setup     # 首次部署 (清理+swap+启动)
-bash 101_deploy.sh start     # 启动服务
-bash 101_deploy.sh stop      # 停止服务
-bash 101_deploy.sh restart   # 重启服务
-bash 101_deploy.sh status    # 查看状态和内存使用
-bash 101_deploy.sh logs      # 查看日志
-bash 101_deploy.sh cleanup   # 清理磁盘空间
-bash 101_deploy.sh import    # 导入镜像
-bash 101_deploy.sh https     # 配置 HTTPS
+# 本地 (Windows, 仅需 Node.js)
+bash build-frontend-local.sh    # 构建前端 (无需 Docker)
+
+# VPS 上
+bash build-on-vps.sh            # 构建 Docker 镜像 (检测已有产物，按需构建)
+bash 101_deploy.sh setup        # 首次部署 (清理+swap+启动)
+bash 101_deploy.sh start        # 启动服务
+bash 101_deploy.sh stop         # 停止服务
+bash 101_deploy.sh restart      # 重启服务
+bash 101_deploy.sh status       # 查看状态和内存使用
+bash 101_deploy.sh logs         # 查看日志
+bash 101_deploy.sh cleanup      # 清理磁盘空间
+bash 101_deploy.sh https        # 配置 HTTPS
 ```
 
 ## OOM 防护措施
